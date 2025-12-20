@@ -5,7 +5,7 @@ torchaudio==0.13.0
 opencv-python
 tqdm
 pandas
-numpy
+numpy<2     #Might not be <2, I don't remember which version is correct
 matplotlib
 transformers
 natsort
@@ -22,12 +22,12 @@ einops
 fvcore
 eva-decord==0.6.1
 iopath
-numpy>=1.19
+#numpy>=1.19
 matplotlib
 types-regex
 mayavi
 cartopy
 moviepy
-moviepy
+#moviepy    
 decord==0.6.0
 timm==0.6.7

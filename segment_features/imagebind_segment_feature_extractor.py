@@ -5,6 +5,10 @@ We use these video segments to extract video embeddings using the imagebind mode
 """
 import argparse
 import os
+import sys
+
+# Add the parent directory to the Python path so we can import from lib
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import numpy as np
 import torch
@@ -91,8 +95,8 @@ def fetch_video_embeddings(video_path):
 
 
 def main():
-    video_directory_path = "/data/rohith/captain_cook/videos/resolution_360p/"
-    video_feature_directory_path = f"/data/rohith/captain_cook/features/gopro/segments/imagebind_{int(segment_length)}/"
+    video_directory_path = "../data/videos/resolution_360p/"
+    video_feature_directory_path = f"../data/features/gopro/segments/imagebind_{int(segment_length)}/"
     os.makedirs(video_feature_directory_path, exist_ok=True)
     video_files = os.listdir(video_directory_path)
 
