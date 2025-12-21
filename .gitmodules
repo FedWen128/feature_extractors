@@ -1,3 +1,6 @@
 [submodule "lib/imagebind"]
 	path = lib/imagebind
 	url = https://github.com/rohithpeddi/ImageBind.git
+[submodule "lib/EgoVLP"]
+	path = lib/EgoVLP
+	url = https://github.com/showlab/EgoVLP.git

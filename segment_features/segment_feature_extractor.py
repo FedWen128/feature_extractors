@@ -102,6 +102,8 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
         video_input = video_inputs.unsqueeze(0).to(device)
     elif method == "3dresnet":
         video_input = video_inputs.unsqueeze(0).to(device)
+    elif method == "egovlp":
+        video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
     with torch.no_grad():
         features = feature_extractor(video_input)
     return features.cpu().numpy()
@@ -212,6 +214,18 @@ def get_video_transformation(name):
                 CenterCropVideo(crop_size=(crop_size, crop_size)),
             ]
         )
+    elif name == "egovlp":
+        num_frames = 16
+        video_transform = T.Compose([
+            UniformTemporalSubsample(num_frames),
+            Lambda(lambda x: x / 255.0),
+            ShortSideScale(size=224),
+            CenterCropVideo(crop_size=224),
+            NormalizeVideo(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            ),
+        ])
     return ApplyTransformToKey(key="video", transform=video_transform)
 
 
@@ -229,6 +243,20 @@ def get_feature_extractor(name, device="cuda"):
     elif name == "3dresnet":
         model = torch.hub.load("facebookresearch/pytorchvideo", "slow_r50", pretrained=True)
         model.heads = torch.nn.Identity()
+    elif name == "egovlp":
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib', 'EgoVLP'))
+        from model.model import FrozenInTime
+        
+        # Load config and checkpoint
+        checkpoint_path = "../lib/EgoVLP/pretrained/egovlp.pth"
+        model = FrozenInTime(
+            video_params={"model": "SpaceTimeTransformer"},
+            text_params={"model": "distilbert-base-uncased"},
+            projection_dim=256,
+        )
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        model.load_state_dict(checkpoint['state_dict'])
+        model.eval()
 
     feature_extractor = model
     feature_extractor = feature_extractor.to(device)
