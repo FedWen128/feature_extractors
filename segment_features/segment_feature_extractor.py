@@ -259,8 +259,8 @@ def main_hololens(is_sequential=False):
 
 # Main
 def main():
-    video_files_path = "/data/video/"
-    output_features_path = f"/data/features/gopro/segments/{method}/"
+    video_files_path = "../data/video/"
+    output_features_path = f"../data/features/gopro/segments/{method}/"
 
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method)
