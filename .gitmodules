@@ -4,3 +4,6 @@
 [submodule "lib/EgoVLP"]
 	path = lib/EgoVLP
 	url = https://github.com/showlab/EgoVLP.git
+[submodule "lib/perception_models"]
+	path = lib/perception_models
+	url = https://github.com/facebookresearch/perception_models.git

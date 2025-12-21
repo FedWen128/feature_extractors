@@ -104,6 +104,9 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
         video_input = video_inputs.unsqueeze(0).to(device)
     elif method == "egovlp":
         video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
+    elif method == "perception_encoder":
+        # PE expects [B, C, T, H, W] format
+        video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)
     with torch.no_grad():
         features = feature_extractor(video_input)
     return features.cpu().numpy()
@@ -226,6 +229,20 @@ def get_video_transformation(name):
                 std=[0.229, 0.224, 0.225]
             ),
         ])
+    elif name == "perception_encoder":
+        # PE-Core uses standard CLIP normalization
+        num_frames = 16  # Good balance for video understanding
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+        video_transform = Compose(
+            [
+                UniformTemporalSubsample(num_frames),
+                Lambda(lambda x: x / 255.0),
+                NormalizeVideo(mean, std),
+                ShortSideScale(size=336),  # PE-Core-L14-336
+                CenterCropVideo(crop_size=336),
+            ]
+        )
     return ApplyTransformToKey(key="video", transform=video_transform)
 
 
@@ -257,6 +274,18 @@ def get_feature_extractor(name, device="cuda"):
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model.load_state_dict(checkpoint['state_dict'])
         model.eval()
+    elif name == "perception_encoder":
+        # Add perception_models to path
+        pe_path = os.path.join(os.path.dirname(__file__), '..', 'lib', 'perception_models')
+        sys.path.insert(0, pe_path)
+        
+        import core.vision_encoder.pe as pe
+        
+        # Load PE-Core-L14-336 model (good balance of performance and size)
+        # Available: PE-Core-T16-384, PE-Core-S16-384, PE-Core-B16-224, PE-Core-L14-336, PE-Core-G14-448
+        model = pe.CLIP.from_config("PE-Core-L14-336", pretrained=True)
+        # Extract only the visual encoder for feature extraction
+        model = model.visual
 
     feature_extractor = model
     feature_extractor = feature_extractor.to(device)
