@@ -2,6 +2,11 @@ import argparse
 import datetime
 import glob
 import os
+import sys
+
+# Add the parent directory to the Python path so we can import omnivore_transforms
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import numpy as np
 import torch
 from pytorchvideo.data.encoded_video import EncodedVideo
@@ -254,8 +259,8 @@ def main_hololens(is_sequential=False):
 
 # Main
 def main():
-    video_files_path = "/data/rohith/captain_cook/data/gopro/resolution_360p"
-    output_features_path = f"/data/rohith/captain_cook/features/gopro/segments/{method}/"
+    video_files_path = "/data/video/"
+    output_features_path = f"/data/features/gopro/segments/{method}/"
 
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method)
