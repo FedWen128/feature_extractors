@@ -30,6 +30,7 @@ from natsort import natsorted
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Script for processing methods.")
     parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
+    parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
     return parser.parse_args()
 
 
@@ -325,6 +326,12 @@ def main():
     processor = VideoProcessor(method, feature_extractor, video_transform)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
+    
+    # Limit number of videos if specified
+    if max_videos is not None:
+        mp4_files = mp4_files[:max_videos]
+    
+    logger.info(f"Processing {len(mp4_files)} videos")
 
     num_threads = 1
     with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
@@ -342,6 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
     args = parse_arguments()
     method = args.backbone
+    max_videos = args.max_videos
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
