@@ -95,7 +95,7 @@ def fetch_video_embeddings(video_path):
 
 
 def main():
-    video_directory_path = "../data/videos/resolution_360p/"
+    video_directory_path = "../data/video/"
     video_feature_directory_path = f"../data/features/gopro/segments/imagebind_{int(segment_length)}/"
     os.makedirs(video_feature_directory_path, exist_ok=True)
     video_files = os.listdir(video_directory_path)
