@@ -98,7 +98,16 @@ def main():
     video_directory_path = "../data/video/"
     video_feature_directory_path = f"../data/features/gopro/segments/imagebind_{int(segment_length)}/"
     os.makedirs(video_feature_directory_path, exist_ok=True)
-    video_files = os.listdir(video_directory_path)
+    video_files = sorted(os.listdir(video_directory_path))
+    
+    # Apply skip (take every Nth video)
+    video_files = video_files[::skip]
+    
+    # Limit number of videos if specified
+    if max_videos is not None:
+        video_files = video_files[:max_videos]
+    
+    print(f"Processing {len(video_files)} videos")
 
     # Use tqdm to show progress bar
     for video_file in tqdm(video_files):
@@ -119,6 +128,11 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--segment_length", type=float, required=True)
+    parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
+    parser.add_argument("--skip", type=int, default=1, help="Process every Nth video (e.g., 2 = every other video)")
 
-    segment_length = parser.parse_args().segment_length
+    args = parser.parse_args()
+    segment_length = args.segment_length
+    max_videos = args.max_videos
+    skip = args.skip
     main()
