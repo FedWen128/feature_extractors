@@ -247,7 +247,12 @@ def get_video_transformation(name):
     return ApplyTransformToKey(key="video", transform=video_transform)
 
 
-def get_feature_extractor(name, device="cuda"):
+def get_feature_extractor(name, device=None):
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    print(f"Using device: {device}")
+    
     if name == "omnivore":
         model_name = "omnivore_swinB_epic"
         model = torch.hub.load("facebookresearch/omnivore:main", model=model_name)
@@ -267,14 +272,40 @@ def get_feature_extractor(name, device="cuda"):
         
         # Load config and checkpoint
         checkpoint_path = "../lib/EgoVLP/pretrained/egovlp.pth"
-        model = FrozenInTime(
-            video_params={"model": "SpaceTimeTransformer"},
-            text_params={"model": "distilbert-base-uncased"},
-            projection_dim=256,
-        )
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        model.load_state_dict(checkpoint['state_dict'])
-        model.eval()
+        
+        egovlp_model = FrozenInTime(
+            video_params={
+                "model": "SpaceTimeTransformer",
+                "arch_config": "base_patch16_224",
+                "num_frames": 16,
+                "pretrained": False,  # Don't load ImageNet pretrained weights, we'll load egovlp.pth
+                "time_init": "zeros"
+            },
+            text_params={
+                "model": "distilbert-base-uncased",
+                "pretrained": True,
+                "input": "text"
+            },
+            projection="minimal",
+            load_checkpoint="skip",  # Non-empty value to skip ViT checkpoint loading
+        )
+        egovlp_model.load_state_dict(checkpoint['state_dict'], strict=False)
+        egovlp_model.eval()
+        
+        # Create wrapper to handle EgoVLP's expected input format
+        class EgoVLPWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            
+            def forward(self, video_tensor):
+                # EgoVLP expects dict with 'video' key and video_only=True
+                # Ensure video_only is passed as a keyword argument
+                data = {'video': video_tensor}
+                return self.model.forward(data, video_only=True)
+        
+        model = EgoVLPWrapper(egovlp_model)
     elif name == "perception_encoder":
         # Add perception_models to path
         pe_path = os.path.join(os.path.dirname(__file__), '..', 'lib', 'perception_models')
