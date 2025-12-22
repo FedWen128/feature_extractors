@@ -95,6 +95,7 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
     video_data_for_transform = {"video": video_data_raw, "audio": None}
     video_data = transforms_to_apply(video_data_for_transform)
     video_inputs = video_data["video"]
+    
     if method in ["omnivore"]:
         video_input = video_inputs[0][None, ...].to(device)
     elif method == "slowfast":
@@ -106,9 +107,9 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
     elif method == "egovlp":
         video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
     elif method == "perception_encoder":
-        # PE expects [B, C, H, W] format (processes images, not videos)
-        # Reshape from [T, C, H, W] to [T, C, H, W] and process each frame
-        video_input = video_inputs.to(device)  # [T, C, H, W]
+        # PE expects [T, C, H, W] format (time, channels, height, width)
+        # PyTorchVideo returns [C, T, H, W] so we need to permute
+        video_input = video_inputs.permute(1, 0, 2, 3).to(device)  # [C, T, H, W] -> [T, C, H, W]
     with torch.no_grad():
         if method == "perception_encoder":
             # Process frames and average pool temporal dimension
