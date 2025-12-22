@@ -106,10 +106,16 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
     elif method == "egovlp":
         video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
     elif method == "perception_encoder":
-        # PE expects [B, C, T, H, W] format
-        video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)
+        # PE expects [B, C, H, W] format (processes images, not videos)
+        # Reshape from [T, C, H, W] to [T, C, H, W] and process each frame
+        video_input = video_inputs.to(device)  # [T, C, H, W]
     with torch.no_grad():
-        features = feature_extractor(video_input)
+        if method == "perception_encoder":
+            # Process frames and average pool temporal dimension
+            features = feature_extractor(video_input)  # [T, D]
+            features = features.mean(dim=0, keepdim=True)  # [1, D] - average over time
+        else:
+            features = feature_extractor(video_input)
     return features.cpu().numpy()
 
 
