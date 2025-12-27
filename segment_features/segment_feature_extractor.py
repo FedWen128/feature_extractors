@@ -31,6 +31,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Script for processing methods.")
     parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
     parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for segment processing (adjust based on GPU memory)")
+    parser.add_argument("--num_threads", type=int, default=10, help="Number of threads for parallel video loading")
     return parser.parse_args()
 
 
@@ -401,8 +403,7 @@ def main():
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method, device)
 
-    # Batch size of 4-8 works well for most GPUs, adjust based on memory
-    processor = VideoProcessor(method, feature_extractor, video_transform, device, batch_size=4)
+    processor = VideoProcessor(method, feature_extractor, video_transform, device, batch_size=batch_size)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -410,10 +411,8 @@ def main():
     if max_videos is not None:
         mp4_files = mp4_files[:max_videos]
     
-    logger.info(f"Processing {len(mp4_files)} videos")
+    logger.info(f"Processing {len(mp4_files)} videos with batch_size={batch_size}, num_threads={num_threads}")
 
-    # Use 10 threads for I/O-bound parallel video loading
-    num_threads = 10
     with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
         list(
             tqdm(
@@ -430,6 +429,8 @@ if __name__ == "__main__":
     args = parse_arguments()
     method = args.backbone
     max_videos = args.max_videos
+    batch_size = args.batch_size
+    num_threads = args.num_threads
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
