@@ -36,10 +36,12 @@ def parse_arguments():
 
 # Video Processing
 class VideoProcessor:
-    def __init__(self, method, feature_extractor, video_transform):
+    def __init__(self, method, feature_extractor, video_transform, device, batch_size=4):
         self.method = method
         self.feature_extractor = feature_extractor
         self.video_transform = video_transform
+        self.device = device
+        self.batch_size = batch_size
 
         self.fps = 30
         self.num_frames_per_feature = 30
@@ -64,6 +66,8 @@ class VideoProcessor:
         stride = 1
 
         video_features = []
+        segment_batch = []
+        
         for start_time in tqdm(np.arange(0, segment_end, segment_size),
                                desc=f"Processing video segments for video {video_name}"):
             end_time = start_time + segment_size
@@ -74,50 +78,85 @@ class VideoProcessor:
 
             video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
             segment_video_inputs = video_data["video"]
-
-            segment_features = extract_features(
-                video_data_raw=segment_video_inputs,
+            segment_batch.append(segment_video_inputs)
+            
+            # Process batch when it reaches batch_size
+            if len(segment_batch) >= self.batch_size:
+                batch_features = extract_features(
+                    video_data_raw_list=segment_batch,
+                    feature_extractor=self.feature_extractor,
+                    transforms_to_apply=self.video_transform,
+                    method=self.method,
+                    device=self.device
+                )
+                video_features.append(batch_features)
+                segment_batch = []
+        
+        # Process remaining segments
+        if segment_batch:
+            batch_features = extract_features(
+                video_data_raw_list=segment_batch,
                 feature_extractor=self.feature_extractor,
                 transforms_to_apply=self.video_transform,
-                method=self.method
+                method=self.method,
+                device=self.device
             )
+            video_features.append(batch_features)
 
-            video_features.append(segment_features)
-
-        video_features = np.vstack(video_features)
-        np.savez(f"{output_file_path}_{int(segment_size)}s_{int(stride)}s.npz", video_features)
-        logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape}")
+        if video_features:
+            video_features = np.vstack(video_features)
+            np.savez(f"{output_file_path}_{int(segment_size)}s_{int(stride)}s.npz", video_features)
+            logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape}")
+        else:
+            logger.warning(f"No features extracted for video: {video_name}")
 
 
 # Feature Extraction
-def extract_features(video_data_raw, feature_extractor, transforms_to_apply, method):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    video_data_for_transform = {"video": video_data_raw, "audio": None}
-    video_data = transforms_to_apply(video_data_for_transform)
-    video_inputs = video_data["video"]
+def extract_features(video_data_raw_list, feature_extractor, transforms_to_apply, method, device):
+    """Extract features from a batch of video segments.
     
-    if method in ["omnivore"]:
-        video_input = video_inputs[0][None, ...].to(device)
-    elif method == "slowfast":
-        video_input = [i.to(device)[None, ...] for i in video_inputs]
-    elif method == "x3d":
-        video_input = video_inputs.unsqueeze(0).to(device)
-    elif method == "3dresnet":
-        video_input = video_inputs.unsqueeze(0).to(device)
-    elif method == "egovlp":
-        video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
-    elif method == "perception_encoder":
-        # PE expects [T, C, H, W] format (time, channels, height, width)
-        # PyTorchVideo returns [C, T, H, W] so we need to permute
-        video_input = video_inputs.permute(1, 0, 2, 3).to(device)  # [C, T, H, W] -> [T, C, H, W]
-    with torch.no_grad():
-        if method == "perception_encoder":
-            # Process frames and average pool temporal dimension
-            features = feature_extractor(video_input)  # [T, D]
-            features = features.mean(dim=0, keepdim=True)  # [1, D] - average over time
-        else:
-            features = feature_extractor(video_input)
-    return features.cpu().numpy()
+    Args:
+        video_data_raw_list: List of video tensors from get_clip()
+        feature_extractor: The model to extract features
+        transforms_to_apply: Transform pipeline
+        method: Model name
+        device: torch device
+    
+    Returns:
+        numpy array of shape [batch_size, feature_dim]
+    """
+    batch_features = []
+    
+    for video_data_raw in video_data_raw_list:
+        video_data_for_transform = {"video": video_data_raw, "audio": None}
+        video_data = transforms_to_apply(video_data_for_transform)
+        video_inputs = video_data["video"]
+        
+        if method in ["omnivore"]:
+            video_input = video_inputs[0][None, ...].to(device)
+        elif method == "slowfast":
+            video_input = [i.to(device)[None, ...] for i in video_inputs]
+        elif method == "x3d":
+            video_input = video_inputs.unsqueeze(0).to(device)
+        elif method == "3dresnet":
+            video_input = video_inputs.unsqueeze(0).to(device)
+        elif method == "egovlp":
+            video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
+        elif method == "perception_encoder":
+            # PE expects [T, C, H, W] format (time, channels, height, width)
+            # PyTorchVideo returns [C, T, H, W] so we need to permute
+            video_input = video_inputs.permute(1, 0, 2, 3).to(device)  # [C, T, H, W] -> [T, C, H, W]
+        
+        with torch.no_grad():
+            if method == "perception_encoder":
+                # Process frames and average pool temporal dimension
+                features = feature_extractor(video_input)  # [T, D]
+                features = features.mean(dim=0, keepdim=True)  # [1, D] - average over time
+            else:
+                features = feature_extractor(video_input)
+        batch_features.append(features.cpu().numpy())
+    
+    return np.vstack(batch_features) if batch_features else np.array([])
 
 
 # Model Initialization
@@ -358,10 +397,12 @@ def main():
     video_files_path = "../data/video/"
     output_features_path = f"../data/features/gopro/segments/{method}/"
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     video_transform = get_video_transformation(method)
-    feature_extractor = get_feature_extractor(method)
+    feature_extractor = get_feature_extractor(method, device)
 
-    processor = VideoProcessor(method, feature_extractor, video_transform)
+    # Batch size of 4-8 works well for most GPUs, adjust based on memory
+    processor = VideoProcessor(method, feature_extractor, video_transform, device, batch_size=4)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -371,7 +412,8 @@ def main():
     
     logger.info(f"Processing {len(mp4_files)} videos")
 
-    num_threads = 1
+    # Use 10 threads for I/O-bound parallel video loading
+    num_threads = 10
     with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
         list(
             tqdm(

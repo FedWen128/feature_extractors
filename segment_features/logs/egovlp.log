@@ -1,0 +1,12 @@
+2025-12-21 23:05:59,887 - INFO - MainThread - Processing 1 videos
+2025-12-21 23:06:00,142 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
+2025-12-21 23:55:12,424 - INFO - MainThread - Processing 1 videos
+2025-12-21 23:55:12,553 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
+2025-12-21 23:56:51,307 - INFO - MainThread - Processing 1 videos
+2025-12-21 23:56:51,550 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
+2025-12-21 23:57:56,121 - INFO - MainThread - Processing 1 videos
+2025-12-21 23:57:56,298 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
+2025-12-22 00:04:00,551 - INFO - MainThread - Processing 1 videos
+2025-12-22 00:04:00,830 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
+2025-12-22 00:05:27,429 - INFO - MainThread - Processing 1 videos
+2025-12-22 00:05:27,584 - INFO - ThreadPoolExecutor-0_0 - video: 8_20_360p_224.mp4 video_duration: 588.7214666666666 s
