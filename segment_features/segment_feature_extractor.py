@@ -3,6 +3,7 @@ import datetime
 import glob
 import os
 import sys
+import json
 
 # Add the parent directory to the Python path so we can import omnivore_transforms
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -33,17 +34,21 @@ def parse_arguments():
     parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size for segment processing (adjust based on GPU memory)")
     parser.add_argument("--num_threads", type=int, default=10, help="Number of threads for parallel video loading")
+    parser.add_argument("--use_cache", type=bool, default=True, help="Use cached segments if available")
+    parser.add_argument("--cache_dir", type=str, default="../data/cache/segments", help="Directory containing cached segments")
     return parser.parse_args()
 
 
 # Video Processing
 class VideoProcessor:
-    def __init__(self, method, feature_extractor, video_transform, device, batch_size=4):
+    def __init__(self, method, feature_extractor, video_transform, device, batch_size=4, use_cache=True, cache_dir="../data/cache/segments"):
         self.method = method
         self.feature_extractor = feature_extractor
         self.video_transform = video_transform
         self.device = device
         self.batch_size = batch_size
+        self.use_cache = use_cache
+        self.cache_dir = cache_dir
 
         self.fps = 30
         self.num_frames_per_feature = 30
@@ -60,42 +65,67 @@ class VideoProcessor:
 
         os.makedirs(output_features_path, exist_ok=True)
 
-        video = EncodedVideo.from_path(video_path)
-        video_duration = video.duration - 0.0
-
-        logger.info(f"video: {video_name} video_duration: {video_duration} s")
-        segment_end = max(video_duration - segment_size + 1, 1)
-        stride = 1
-
-        video_features = []
+        # Try to load from cache first
         segment_batch = []
+        video_segments = []
         
-        for start_time in tqdm(np.arange(0, segment_end, segment_size),
-                               desc=f"Processing video segments for video {video_name}"):
-            end_time = start_time + segment_size
-            end_time = min(end_time, video_duration)
-
-            if end_time - start_time < 0.04:
-                continue
-
-            video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
-            segment_video_inputs = video_data["video"]
-            segment_batch.append(segment_video_inputs)
+        if self.use_cache:
+            video_cache_dir = os.path.join(self.cache_dir, video_name)
+            metadata_file = os.path.join(video_cache_dir, "metadata.json")
             
-            # Process batch when it reaches batch_size
-            if len(segment_batch) >= self.batch_size:
-                batch_features = extract_features(
-                    video_data_raw_list=segment_batch,
-                    feature_extractor=self.feature_extractor,
-                    transforms_to_apply=self.video_transform,
-                    method=self.method,
-                    device=self.device
-                )
-                video_features.append(batch_features)
-                segment_batch = []
+            if os.path.exists(metadata_file):
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    # Load cached segments
+                    for segment_info in metadata["segments"]:
+                        segment_path = segment_info["path"]
+                        if os.path.exists(segment_path):
+                            segment_data = np.load(segment_path)
+                            video_segments.append(torch.from_numpy(segment_data).float())
+                    
+                    logger.info(f"Loaded {len(video_segments)} cached segments for video: {video_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to load cache for {video_name}: {e}. Falling back to decoding.")
+                    video_segments = []
         
-        # Process remaining segments
-        if segment_batch:
+        # If cache not available or failed, decode video
+        if not video_segments:
+            logger.info(f"Decoding video: {video_name}")
+            try:
+                video = EncodedVideo.from_path(video_path)
+                video_duration = video.duration - 0.0
+            except Exception as e:
+                logger.error(f"Failed to load video {video_name}: {e}")
+                return
+
+            logger.info(f"video: {video_name} video_duration: {video_duration} s")
+            segment_end = max(video_duration - segment_size + 1, 1)
+            
+            for start_time in np.arange(0, segment_end, segment_size):
+                end_time = start_time + segment_size
+                end_time = min(end_time, video_duration)
+
+                if end_time - start_time < 0.04:
+                    continue
+
+                try:
+                    video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
+                    segment_video_inputs = video_data["video"]
+                    video_segments.append(segment_video_inputs)
+                except Exception as e:
+                    logger.error(f"Failed to extract segment at {start_time}s for {video_name}: {e}")
+                    continue
+
+        # Process segments in batches
+        video_features = []
+        stride = 1
+        
+        for i in tqdm(range(0, len(video_segments), self.batch_size),
+                      desc=f"Processing video segments for video {video_name}"):
+            segment_batch = video_segments[i:i+self.batch_size]
+            
             batch_features = extract_features(
                 video_data_raw_list=segment_batch,
                 feature_extractor=self.feature_extractor,
@@ -403,7 +433,8 @@ def main():
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method, device)
 
-    processor = VideoProcessor(method, feature_extractor, video_transform, device, batch_size=batch_size)
+    processor = VideoProcessor(method, feature_extractor, video_transform, device, batch_size=batch_size, 
+                               use_cache=use_cache, cache_dir=cache_dir)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -411,7 +442,7 @@ def main():
     if max_videos is not None:
         mp4_files = mp4_files[:max_videos]
     
-    logger.info(f"Processing {len(mp4_files)} videos with batch_size={batch_size}, num_threads={num_threads}")
+    logger.info(f"Processing {len(mp4_files)} videos with batch_size={batch_size}, num_threads={num_threads}, use_cache={use_cache}")
 
     with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
         list(
@@ -431,6 +462,8 @@ if __name__ == "__main__":
     max_videos = args.max_videos
     batch_size = args.batch_size
     num_threads = args.num_threads
+    use_cache = args.use_cache
+    cache_dir = args.cache_dir
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
