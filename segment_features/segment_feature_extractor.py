@@ -74,6 +74,7 @@ class VideoProcessor:
             return
 
         logger.info(f"video: {video_name} video_duration: {video_duration} s (Device: {self.device})")
+        logger.info(f"segment_size: {segment_size}s, target_frames: {target_frames}, segment_end: {segment_end}s")
         segment_end = max(video_duration - segment_size + 1, 1)
         stride = 1
 
@@ -85,6 +86,7 @@ class VideoProcessor:
 
         try:
             container.seek(0)
+            frame_count = 0
             
             for frame in container.decode(video_stream):
                 frame_time = float(frame.pts * video_stream.time_base)
@@ -93,12 +95,14 @@ class VideoProcessor:
                 frame_array = frame.to_ndarray(format='rgb24')
                 frame_tensor = torch.from_numpy(frame_array).to(self.device).float()
                 frame_buffer.append(frame_tensor)
+                frame_count += 1
                 
                 # Check if we have enough frames for a segment
                 if len(frame_buffer) >= target_frames:
-                    if frame_time >= current_segment_start + segment_size:
+                    if frame_time >= current_segment_start + segment_size or frame_count >= target_frames:
                         # Stack frames on GPU
                         segment_video = torch.stack(frame_buffer[:target_frames])
+                        logger.info(f"Created segment at {current_segment_start}s, frames: {segment_video.shape}, device: {segment_video.device}")
                         
                         # Extract features (all on GPU)
                         segment_features = extract_features(
@@ -130,9 +134,9 @@ class VideoProcessor:
         if video_features:
             video_features = np.vstack(video_features)
             np.savez(f"{output_file_path}_{int(segment_size)}s_{int(stride)}s.npz", video_features)
-            logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape}")
+            logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape} total segments: {len(video_features)}")
         else:
-            logger.warning(f"No features extracted for video: {video_name}")
+            logger.warning(f"No features extracted for video: {video_name} - frame_count: {frame_count}, num_segments: {len(video_features)}")
 
 
 # Feature Extraction
