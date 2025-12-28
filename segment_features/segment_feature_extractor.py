@@ -299,6 +299,14 @@ def get_feature_extractor(name, device=None):
         )
         egovlp_model.load_state_dict(checkpoint['state_dict'], strict=False)
         egovlp_model.eval()
+
+        # --- AGGIUNTA: Compilazione del modello ---
+    try:
+        print("Compiling model with torch.compile...")
+        feature_extractor = torch.compile(feature_extractor)
+    except Exception as e:
+        print(f"Compilation failed or not supported: {e}")
+    # ------------------------------------------
         
         # Create wrapper to handle EgoVLP's expected input format
         class EgoVLPWrapper(torch.nn.Module):
