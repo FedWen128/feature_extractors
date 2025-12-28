@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import numpy as np
 import torch
+import av
 from pytorchvideo.data.encoded_video import EncodedVideo
 import concurrent.futures
 import logging
@@ -57,52 +58,71 @@ class SegmentPreprocessor:
         os.makedirs(video_cache_dir, exist_ok=True)
 
         try:
-            video = EncodedVideo.from_path(video_path)
-            video_duration = video.duration - 0.0
+            container = av.open(video_path)
+            video_stream = next(s for s in container.streams if s.type == 'video')
+            video_duration = float(container.duration / av.time_base)
+            
+            # Enable GPU hardware decoding if available
+            if self.device.type == "cuda":
+                video_stream.codec_context.options = {"hwaccel": "cuda", "hwaccel_device": "0"}
         except Exception as e:
             logger.error(f"Failed to load video {video_name}: {e}")
             return
 
-        logger.info(f"video: {video_name} video_duration: {video_duration} s")
+        logger.info(f"video: {video_name} video_duration: {video_duration} s (Device: {self.device})")
         segment_end = max(video_duration - segment_size + 1, 1)
         
         segments = []
         segment_index = 0
+        frame_buffer = []
+        target_frames = int(self.num_frames_per_feature)
+        current_segment_start = 0.0
         
-        for start_time in tqdm(np.arange(0, segment_end, segment_size),
-                               desc=f"Preprocessing video segments for {video_name}"):
-            end_time = start_time + segment_size
-            end_time = min(end_time, video_duration)
-
-            if end_time - start_time < 0.04:
-                continue
-
-            try:
-                video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
-                segment_video = video_data["video"]
+        try:
+            # Seek to start of video
+            container.seek(0)
+            
+            for frame in container.decode(video_stream):
+                frame_time = float(frame.pts * video_stream.time_base)
                 
-                # Move to device and process
-                if isinstance(segment_video, torch.Tensor):
-                    segment_video = segment_video.to(self.device)
-                    # Convert to numpy for storage (move back to CPU if on GPU)
-                    segment_video = segment_video.cpu().numpy()
-                else:
-                    segment_video = np.asarray(segment_video)
+                # Convert frame to tensor on GPU if available
+                frame_array = frame.to_ndarray(format='rgb24')
+                frame_tensor = torch.from_numpy(frame_array).to(self.device)
+                frame_buffer.append(frame_tensor)
                 
-                # Save segment
-                segment_path = os.path.join(video_cache_dir, f"segment_{segment_index:06d}.npy")
-                np.save(segment_path, segment_video)
+                # Check if we have enough frames for a segment
+                if len(frame_buffer) >= target_frames:
+                    if frame_time >= current_segment_start + segment_size:
+                        # Stack frames and move back to CPU for saving
+                        segment_video = torch.stack(frame_buffer[:target_frames]).cpu().numpy()
+                        
+                        # Save segment
+                        segment_path = os.path.join(video_cache_dir, f"segment_{segment_index:06d}.npy")
+                        np.save(segment_path, segment_video)
+                        
+                        segments.append({
+                            "index": segment_index,
+                            "start_time": float(current_segment_start),
+                            "end_time": float(current_segment_start + segment_size),
+                            "path": segment_path
+                        })
+                        
+                        segment_index += 1
+                        current_segment_start += segment_size
+                        frame_buffer = []
+                        
+                        # Stop if we've reached the end
+                        if current_segment_start >= segment_end:
+                            break
                 
-                segments.append({
-                    "index": segment_index,
-                    "start_time": float(start_time),
-                    "end_time": float(end_time),
-                    "path": segment_path
-                })
-                segment_index += 1
-            except Exception as e:
-                logger.error(f"Failed to process segment at {start_time}s for {video_name}: {e}")
-                continue
+                if frame_time >= segment_end:
+                    break
+        except Exception as e:
+            logger.error(f"Failed to process video {video_name}: {e}")
+            container.close()
+            return
+        
+        container.close()
 
         # Save metadata
         metadata = {
@@ -110,7 +130,8 @@ class SegmentPreprocessor:
             "video_duration": video_duration,
             "segment_size": segment_size,
             "total_segments": len(segments),
-            "segments": segments
+            "segments": segments,
+            "device": str(self.device)
         }
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
