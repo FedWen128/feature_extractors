@@ -31,6 +31,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Script for processing methods.")
     parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
     parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for GPU inference")
+    parser.add_argument("--num_threads", type=int, default=1, help="Number of threads for parallel processing")
     return parser.parse_args()
 
 
@@ -401,17 +403,16 @@ def get_feature_extractor(name, device=None):
     return feature_extractor
 
 
-def main_hololens(is_sequential=False):
+def main_hololens(is_sequential=False, batch_size=8, num_threads=10):
     hololens_directory_path = "/data/rohith/captain_cook/data/hololens/"
     output_features_path = f"/data/rohith/captain_cook/features/hololens/segments/{method}/"
 
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method)
 
-    processor = VideoProcessor(method, feature_extractor, video_transform)
+    processor = VideoProcessor(method, feature_extractor, video_transform, batch_size=batch_size)
 
     if not is_sequential:
-        num_threads = 10
         with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
             for recording_id in os.listdir(hololens_directory_path):
                 video_file_path = os.path.join(hololens_directory_path, recording_id, "sync", "pv")
@@ -423,14 +424,14 @@ def main_hololens(is_sequential=False):
 
 
 # Main
-def main():
+def main(batch_size=8, num_threads=1):
     video_files_path = "../data/video/"
     output_features_path = f"../data/features/gopro/segments/{method}/"
 
     video_transform = get_video_transformation(method)
     feature_extractor = get_feature_extractor(method)
 
-    processor = VideoProcessor(method, feature_extractor, video_transform, batch_size=8)
+    processor = VideoProcessor(method, feature_extractor, video_transform, batch_size=batch_size)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -438,9 +439,8 @@ def main():
     if max_videos is not None:
         mp4_files = mp4_files[:max_videos]
     
-    logger.info(f"Processing {len(mp4_files)} videos")
+    logger.info(f"Processing {len(mp4_files)} videos with batch_size={batch_size}, num_threads={num_threads}")
 
-    num_threads = 1
     with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
         list(
             tqdm(
@@ -457,6 +457,8 @@ if __name__ == "__main__":
     args = parse_arguments()
     method = args.backbone
     max_videos = args.max_videos
+    batch_size = args.batch_size
+    num_threads = args.num_threads
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
@@ -469,4 +471,4 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
 
     # main_hololens(is_sequential=False)
-    main()
+    main(batch_size=batch_size, num_threads=num_threads)
