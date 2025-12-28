@@ -74,7 +74,6 @@ class VideoProcessor:
             return
 
         logger.info(f"video: {video_name} video_duration: {video_duration} s (Device: {self.device})")
-        logger.info(f"segment_size: {segment_size}s, target_frames: {target_frames}, segment_end: {segment_end}s")
         segment_end = max(video_duration - segment_size + 1, 1)
         stride = 1
 
@@ -83,6 +82,8 @@ class VideoProcessor:
         frame_buffer = []
         target_frames = int(self.num_frames_per_feature)
         current_segment_start = 0.0
+        
+        logger.info(f"segment_size: {segment_size}s, target_frames: {target_frames}, segment_end: {segment_end}s")
 
         try:
             container.seek(0)
