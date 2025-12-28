@@ -299,14 +299,6 @@ def get_feature_extractor(name, device=None):
         )
         egovlp_model.load_state_dict(checkpoint['state_dict'], strict=False)
         egovlp_model.eval()
-
-        # --- AGGIUNTA: Compilazione del modello ---
-    try:
-        print("Compiling model with torch.compile...")
-        feature_extractor = torch.compile(feature_extractor)
-    except Exception as e:
-        print(f"Compilation failed or not supported: {e}")
-    # ------------------------------------------
         
         # Create wrapper to handle EgoVLP's expected input format
         class EgoVLPWrapper(torch.nn.Module):
@@ -321,6 +313,7 @@ def get_feature_extractor(name, device=None):
                 return self.model.forward(data, video_only=True)
         
         model = EgoVLPWrapper(egovlp_model)
+    
     elif name == "perception_encoder":
         # Add perception_models to path
         pe_path = os.path.join(os.path.dirname(__file__), '..', 'lib', 'perception_models')
@@ -334,7 +327,20 @@ def get_feature_extractor(name, device=None):
         # Extract only the visual encoder for feature extraction
         model = model.visual
 
-    feature_extractor = model
+    # 1. Caricamento del modello
+    feature_extractor = model.from_pretrained("nome-modello")
+    feature_extractor.to(device)
+    feature_extractor.eval() # Se sei in fase di inferenza
+
+    # --- AGGIUNTA: Compilazione del modello ---
+    try:
+        print("Compiling model with torch.compile...")
+        # backend="inductor" è il default, ma puoi specificarlo. mode="reduce-overhead" è utile per piccoli batch.
+        feature_extractor = torch.compile(feature_extractor)
+    except Exception as e:
+        print(f"Compilation failed or not supported: {e}")
+    # ------------------------------------------
+
     feature_extractor = feature_extractor.to(device)
     feature_extractor = feature_extractor.eval()
     return feature_extractor
