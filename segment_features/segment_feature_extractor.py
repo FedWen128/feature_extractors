@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import numpy as np
 import torch
-from pytorchvideo.data.encoded_video import EncodedVideo
+import av
 from pytorchvideo.transforms import (
     ApplyTransformToKey,
     ShortSideScale,
@@ -31,15 +31,18 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Script for processing methods.")
     parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
     parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for segment processing")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use (cuda or cpu)")
     return parser.parse_args()
 
 
 # Video Processing
 class VideoProcessor:
-    def __init__(self, method, feature_extractor, video_transform):
+    def __init__(self, method, feature_extractor, video_transform, device="cuda"):
         self.method = method
         self.feature_extractor = feature_extractor
         self.video_transform = video_transform
+        self.device = torch.device(device if device != "cpu" else "cpu")
 
         self.fps = 30
         self.num_frames_per_feature = 30
@@ -56,46 +59,107 @@ class VideoProcessor:
 
         os.makedirs(output_features_path, exist_ok=True)
 
-        video = EncodedVideo.from_path(video_path)
-        video_duration = video.duration - 0.0
+        # GPU-accelerated video decoding using PyAV
+        logger.info(f"Decoding video with GPU acceleration: {video_name}")
+        try:
+            container = av.open(video_path)
+            video_stream = next(s for s in container.streams if s.type == 'video')
+            video_duration = float(container.duration / av.time_base)
+            
+            # Enable GPU hardware decoding if available
+            if self.device.type == "cuda":
+                video_stream.codec_context.options = {"hwaccel": "cuda", "hwaccel_device": "0"}
+        except Exception as e:
+            logger.error(f"Failed to load video {video_name}: {e}")
+            return
 
-        logger.info(f"video: {video_name} video_duration: {video_duration} s")
+        logger.info(f"video: {video_name} video_duration: {video_duration} s (Device: {self.device})")
         segment_end = max(video_duration - segment_size + 1, 1)
         stride = 1
 
+        # Decode all frames and keep on GPU
         video_features = []
-        for start_time in tqdm(np.arange(0, segment_end, segment_size),
-                               desc=f"Processing video segments for video {video_name}"):
-            end_time = start_time + segment_size
-            end_time = min(end_time, video_duration)
+        frame_buffer = []
+        target_frames = int(self.num_frames_per_feature)
+        current_segment_start = 0.0
 
-            if end_time - start_time < 0.04:
-                continue
+        try:
+            container.seek(0)
+            
+            for frame in container.decode(video_stream):
+                frame_time = float(frame.pts * video_stream.time_base)
+                
+                # Convert frame to GPU tensor directly
+                frame_array = frame.to_ndarray(format='rgb24')
+                frame_tensor = torch.from_numpy(frame_array).to(self.device).float()
+                frame_buffer.append(frame_tensor)
+                
+                # Check if we have enough frames for a segment
+                if len(frame_buffer) >= target_frames:
+                    if frame_time >= current_segment_start + segment_size:
+                        # Stack frames on GPU
+                        segment_video = torch.stack(frame_buffer[:target_frames])
+                        
+                        # Extract features (all on GPU)
+                        segment_features = extract_features(
+                            video_data_raw=segment_video,
+                            feature_extractor=self.feature_extractor,
+                            transforms_to_apply=self.video_transform,
+                            method=self.method,
+                            device=self.device
+                        )
+                        
+                        video_features.append(segment_features)
+                        
+                        current_segment_start += segment_size
+                        frame_buffer = []
+                        
+                        # Stop if we've reached the end
+                        if current_segment_start >= segment_end:
+                            break
+                
+                if frame_time >= segment_end:
+                    break
+        except Exception as e:
+            logger.error(f"Failed to process video {video_name}: {e}")
+            container.close()
+            return
+        
+        container.close()
 
-            video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
-            segment_video_inputs = video_data["video"]
-
-            segment_features = extract_features(
-                video_data_raw=segment_video_inputs,
-                feature_extractor=self.feature_extractor,
-                transforms_to_apply=self.video_transform,
-                method=self.method
-            )
-
-            video_features.append(segment_features)
-
-        video_features = np.vstack(video_features)
-        np.savez(f"{output_file_path}_{int(segment_size)}s_{int(stride)}s.npz", video_features)
-        logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape}")
+        if video_features:
+            video_features = np.vstack(video_features)
+            np.savez(f"{output_file_path}_{int(segment_size)}s_{int(stride)}s.npz", video_features)
+            logger.info(f"Finished extraction and saving video: {video_name} video_features: {video_features.shape}")
+        else:
+            logger.warning(f"No features extracted for video: {video_name}")
 
 
 # Feature Extraction
-def extract_features(video_data_raw, feature_extractor, transforms_to_apply, method):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    video_data_for_transform = {"video": video_data_raw, "audio": None}
+def extract_features(video_data_raw, feature_extractor, transforms_to_apply, method, device):
+    """Extract features from GPU tensor video data.
+    
+    Args:
+        video_data_raw: GPU tensor of shape [T, H, W, C] (frames on GPU)
+        feature_extractor: Model for feature extraction
+        transforms_to_apply: Transform pipeline
+        method: Model name
+        device: torch device
+    
+    Returns:
+        numpy array of shape [1, feature_dim] (moved to CPU)
+    """
+    # Rearrange to [C, T, H, W] format for transforms
+    video_tensor = video_data_raw.permute(3, 0, 1, 2).unsqueeze(0).float()  # [1, C, T, H, W]
+    
+    # Create transform dict with video on GPU
+    video_data_for_transform = {"video": video_tensor, "audio": None}
+    
+    # Apply transforms (operate on GPU tensors)
     video_data = transforms_to_apply(video_data_for_transform)
     video_inputs = video_data["video"]
     
+    # Move to model input format (already on GPU)
     if method in ["omnivore"]:
         video_input = video_inputs[0][None, ...].to(device)
     elif method == "slowfast":
@@ -107,16 +171,17 @@ def extract_features(video_data_raw, feature_extractor, transforms_to_apply, met
     elif method == "egovlp":
         video_input = video_inputs.permute(1, 0, 2, 3).unsqueeze(0).to(device)  # [B, C, T, H, W]
     elif method == "perception_encoder":
-        # PE expects [T, C, H, W] format (time, channels, height, width)
-        # PyTorchVideo returns [C, T, H, W] so we need to permute
-        video_input = video_inputs.permute(1, 0, 2, 3).to(device)  # [C, T, H, W] -> [T, C, H, W]
+        video_input = video_inputs.permute(1, 0, 2, 3).to(device)  # [T, C, H, W]
+    
+    # Feature extraction on GPU
     with torch.no_grad():
         if method == "perception_encoder":
-            # Process frames and average pool temporal dimension
             features = feature_extractor(video_input)  # [T, D]
-            features = features.mean(dim=0, keepdim=True)  # [1, D] - average over time
+            features = features.mean(dim=0, keepdim=True)  # [1, D]
         else:
             features = feature_extractor(video_input)
+    
+    # Return as numpy on CPU
     return features.cpu().numpy()
 
 
@@ -359,9 +424,9 @@ def main():
     output_features_path = f"../data/features/gopro/segments/{method}/"
 
     video_transform = get_video_transformation(method)
-    feature_extractor = get_feature_extractor(method)
+    feature_extractor = get_feature_extractor(method, device=device)
 
-    processor = VideoProcessor(method, feature_extractor, video_transform)
+    processor = VideoProcessor(method, feature_extractor, video_transform, device=device)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -383,11 +448,11 @@ def main():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Script for processing methods.")
-    parser.add_argument("--backbone", type=str, default="omnivore", help="Specify the method to be used.")
     args = parse_arguments()
     method = args.backbone
     max_videos = args.max_videos
+    batch_size = args.batch_size
+    device = args.device
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
