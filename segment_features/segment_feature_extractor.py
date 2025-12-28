@@ -327,10 +327,10 @@ def get_feature_extractor(name, device=None):
         # Extract only the visual encoder for feature extraction
         model = model.visual
 
-    # 1. Caricamento del modello
-    feature_extractor = model.from_pretrained("nome-modello")
+    # 1. Assegnazione del modello già caricato
+    feature_extractor = model
     feature_extractor.to(device)
-    feature_extractor.eval() # Se sei in fase di inferenza
+    feature_extractor.eval()
 
     # --- AGGIUNTA: Compilazione del modello ---
     try:
