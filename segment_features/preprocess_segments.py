@@ -20,16 +20,26 @@ def parse_arguments():
     parser.add_argument("--max_videos", type=int, default=None, help="Maximum number of videos to process")
     parser.add_argument("--num_threads", type=int, default=10, help="Number of threads for parallel video decoding")
     parser.add_argument("--cache_dir", type=str, default="../data/cache/segments", help="Directory to save cached segments")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", 
+                        help="Device to use for processing (cuda or cpu)")
     return parser.parse_args()
 
 
 # Video Preprocessing
 class SegmentPreprocessor:
-    def __init__(self, cache_dir, num_threads=10):
+    def __init__(self, cache_dir, num_threads=10, device="cpu"):
         self.cache_dir = cache_dir
         self.num_threads = num_threads
         self.fps = 30
         self.num_frames_per_feature = 30
+        self.device = torch.device(device if device != "cpu" else "cpu")
+        
+        # Log device information
+        if self.device.type == "cuda":
+            logger.info(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+            logger.info(f"CUDA device count: {torch.cuda.device_count()}")
+        else:
+            logger.info("Using CPU for processing")
         
     def preprocess_video(self, video_name, video_directory_path):
         segment_size = self.fps / self.num_frames_per_feature
@@ -69,7 +79,15 @@ class SegmentPreprocessor:
 
             try:
                 video_data = video.get_clip(start_sec=start_time, end_sec=end_time)
-                segment_video = video_data["video"].numpy()  # Convert to numpy for storage
+                segment_video = video_data["video"]
+                
+                # Move to device and process
+                if isinstance(segment_video, torch.Tensor):
+                    segment_video = segment_video.to(self.device)
+                    # Convert to numpy for storage (move back to CPU if on GPU)
+                    segment_video = segment_video.cpu().numpy()
+                else:
+                    segment_video = np.asarray(segment_video)
                 
                 # Save segment
                 segment_path = os.path.join(video_cache_dir, f"segment_{segment_index:06d}.npy")
@@ -103,7 +121,7 @@ class SegmentPreprocessor:
 def main():
     video_files_path = "../data/video/"
     
-    preprocessor = SegmentPreprocessor(cache_dir=cache_dir, num_threads=num_threads)
+    preprocessor = SegmentPreprocessor(cache_dir=cache_dir, num_threads=num_threads, device=device)
 
     mp4_files = [file for file in os.listdir(video_files_path) if file.endswith(".mp4")]
     
@@ -131,6 +149,7 @@ if __name__ == "__main__":
     max_videos = args.max_videos
     num_threads = args.num_threads
     cache_dir = args.cache_dir
+    device = args.device
 
     log_directory = os.path.join(os.getcwd(), 'logs')
     if not os.path.exists(log_directory):
