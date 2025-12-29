@@ -406,7 +406,7 @@ def main():
     batch_size = args.batch_size
 
     video_files_path = "../data/video/"
-    output_features_path = f"../data/features/gopro/segments/{method}/"
+    output_features_path = f"/content/drive/MyDrive/AMLproject/our_features/gopro/segments/{method}/"
 
     # Setup logging
     log_directory = os.path.join(os.getcwd(), 'logs')
