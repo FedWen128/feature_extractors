@@ -405,7 +405,7 @@ def main():
     max_videos = args.max_videos
     batch_size = args.batch_size
 
-    video_files_path = "../data/video/"
+    video_files_path = "/content/drive/MyDrive/AMLproject/input_videos/"
     output_features_path = f"/content/drive/MyDrive/AMLproject/our_features/gopro/segments/{method}/"
 
     # Setup logging
